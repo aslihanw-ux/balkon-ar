@@ -5,34 +5,109 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+  <script>
+    AFRAME.registerShader('chromakey', {
+      schema: {
+        src: {type: 'map', is: 'uniform'},
+        color: {type: 'color', is: 'uniform', default: '#00FF00'},
+        threshold: {type: 'number', is: 'uniform', default: 0.5},
+        smoothing: {type: 'number', is: 'uniform', default: 0.2},
+        spill: {type: 'number', is: 'uniform', default: 0.5}
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D src;
+        uniform vec3 color;
+        uniform float threshold;
+        uniform float smoothing;
+        uniform float spill;
+        varying vec2 vUv;
+        void main() {
+          vec4 texColor = texture2D(src, vUv);
+          float diff = length(texColor.rgb - color);
+          float alpha = smoothstep(threshold, threshold + smoothing, diff);
+          float greenExcess = max(texColor.g - max(texColor.r, texColor.b), 0.0);
+          vec3 despilled = texColor.rgb - vec3(0.0, greenExcess * spill, 0.0);
+          gl_FragColor = vec4(despilled, alpha);
+        }
+      `
+    });
+
+    // DÜZELTİLMİŞ yumuşatma: matrisi doğrudan okuyup yumuşatıyor
+    AFRAME.registerComponent('smooth-anchor', {
+      schema: {speed: {type: 'number', default: 0.2}},
+      init: function () {
+        this.rawPos = new THREE.Vector3();
+        this.rawQuat = new THREE.Quaternion();
+        this.rawScale = new THREE.Vector3();
+        this.smoothPos = new THREE.Vector3();
+        this.smoothQuat = new THREE.Quaternion();
+        this.smoothScale = new THREE.Vector3(1, 1, 1);
+        this.ready = false;
+      },
+      tick: function () {
+        const obj = this.el.object3D;
+        if (!obj.visible) return;
+        obj.matrix.decompose(this.rawPos, this.rawQuat, this.rawScale);
+        if (!this.ready) {
+          this.smoothPos.copy(this.rawPos);
+          this.smoothQuat.copy(this.rawQuat);
+          this.smoothScale.copy(this.rawScale);
+          this.ready = true;
+        } else {
+          this.smoothPos.lerp(this.rawPos, this.data.speed);
+          this.smoothQuat.slerp(this.rawQuat, this.data.speed);
+          this.smoothScale.lerp(this.rawScale, this.data.speed);
+        }
+        obj.matrix.compose(this.smoothPos, this.smoothQuat, this.smoothScale);
+      }
+    });
+
+    AFRAME.registerComponent('persist-visibility', {
+      schema: {holdFrames: {type: 'number', default: 30}},
+      init: function () { this.hiddenCounter = 0; },
+      tick: function () {
+        const visible = this.el.object3D.visible;
+        if (!visible) {
+          this.hiddenCounter++;
+          if (this.hiddenCounter < this.data.holdFrames) this.el.object3D.visible = true;
+        } else {
+          this.hiddenCounter = 0;
+        }
+      }
+    });
+  </script>
 </head>
 <body style="margin:0; overflow:hidden;">
 
   <a-scene
-    mindar-image="imageTargetSrc: ./targets.mind; filterMinCF:0.0001; filterBeta: 5; missTolerance:15; warmupTolerance:3; uiScanning: no; uiLoading: no; uiError: no;"
+    mindar-image="imageTargetSrc: ./targets.mind; filterMinCF:0.0001; filterBeta: 5; missTolerance:20; warmupTolerance:3; uiScanning: no; uiLoading: no; uiError: no;"
     color-space="sRGB"
     renderer="colorManagement: true; physicallyCorrectLights: true; alpha: true;"
     vr-mode-ui="enabled: false"
     device-orientation-permission-ui="enabled: true"
   >
     <a-assets>
-      <video id="personVideo" autoplay loop muted playsinline crossorigin="anonymous">
-        <source src="./person-android.webm" type="video/webm">
-      </video>
+      <video id="personVideo" src="./person.mp4" autoplay loop muted playsinline crossorigin="anonymous"></video>
     </a-assets>
 
     <a-camera position="0 0 0" look-controls="enabled: false" cursor="fuse: false"></a-camera>
 
-    <a-entity mindar-image-target="targetIndex: 0">
-      <a-video
-        id="figureVideo"
-        src="#personVideo"
-        material="shader: flat; transparent: true; side: double"
+    <a-entity mindar-image-target="targetIndex: 0" smooth-anchor="speed: 0.2" persist-visibility="holdFrames: 30">
+      <a-plane
+        id="figurePlane"
+        material="shader: chromakey; src: #personVideo; transparent: true; side: double; threshold: 0.5; smoothing: 0.2; spill: 0.5"
         position="0 0 0"
         rotation="0 0 0"
         width="0.45"
         height="0.65"
-      ></a-video>
+      ></a-plane>
     </a-entity>
 
   </a-scene>
@@ -60,7 +135,7 @@
 
   <script>
     window.addEventListener('DOMContentLoaded', () => {
-      const plane = document.querySelector('#figureVideo');
+      const plane = document.querySelector('#figurePlane');
       const xS = document.querySelector('#xSlider');
       const yS = document.querySelector('#ySlider');
       const sS = document.querySelector('#sSlider');
