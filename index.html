@@ -60,13 +60,6 @@
 
   <script>
     window.addEventListener('DOMContentLoaded', () => {
-      const videoEl = document.querySelector('#figureVideo');
-      videoEl.addEventListener('materialtextureloaded', (e) => {
-        const tex = e.detail.texture;
-        tex.format = THREE.RGBAFormat;
-        tex.needsUpdate = true;
-      });
-
       const plane = document.querySelector('#figureVideo');
       const xS = document.querySelector('#xSlider');
       const yS = document.querySelector('#ySlider');
